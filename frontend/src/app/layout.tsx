@@ -171,6 +171,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   Collateral
                 </Link>
                 <Link
+                  href="/transactions"
+                  className="hover:opacity-100 transition"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  Transactions
+                </Link>
+                <Link
                   href="/help/faq"
                   className="hover:opacity-100 transition"
                   style={{ color: 'var(--color-text-muted)' }}
