@@ -1,34 +1,19 @@
 /**
- * Skeleton — reusable loading placeholder component (#1065).
+ * Skeleton — placeholder for content that is loading for the first time.
  *
- * Renders an animated shimmer block that mimics the shape of the content
- * it will replace. Uses the `skeleton-shimmer` CSS class defined in
- * globals.css which transitions between --color-skeleton-base and
- * --color-skeleton-shine, both of which flip automatically in dark mode.
+ * Use for page/section entry when there is *no existing data* yet.
+ * For inline action feedback (button click, filter change), use Spinner.
+ * For file-upload progress, use ProgressBar.
  *
- * Variants:
- * - text      : single-line text row (default height h-4)
- * - heading   : larger text row (h-7)
- * - avatar    : square thumbnail (h-12 w-12)
- * - card      : taller card-shaped block (h-32)
- * - button    : button-sized block (h-10 w-24)
- * - badge     : pill badge (h-5 w-16 rounded-full)
- * - circle    : circle (h-10 w-10 rounded-full)
- * - custom    : no preset — use className to specify dimensions
+ * Accessibility:
+ *  - The shimmer bar is `aria-hidden` (decorative).
+ *  - Wrap one or more Skeleton bars in a container that carries
+ *    `aria-busy="true"` and an `aria-label` describing what is loading.
+ *    All ready-made page-level skeletons (SkeletonDashboard, etc.) do
+ *    this automatically.
  *
- * All variants accept an optional className override.
+ * See LoadingStates.stories.tsx for the full hierarchy and usage rules.
  */
-
-export type SkeletonVariant =
-  | 'text'
-  | 'heading'
-  | 'avatar'
-  | 'card'
-  | 'button'
-  | 'badge'
-  | 'circle'
-  | 'custom';
-
 interface SkeletonProps {
   /** Visual variant — controls default dimensions and border-radius. */
   variant?: SkeletonVariant;
