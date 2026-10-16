@@ -150,6 +150,27 @@ Access:
 - Frontend: `http://localhost:3000`
 - Backend API: `http://localhost:3001`
 
+#### Hot reload (recommended for development)
+
+The repository includes a `docker-compose.override.yml` that is automatically picked up by Docker Compose. It mounts source directories as volumes and runs watch-mode commands so changes are reflected instantly without rebuilding:
+
+- **Backend:** `ts-node-dev` watches `./backend/src/` and restarts on changes.
+- **Frontend:** `next dev` enables Next.js Fast Refresh from `./frontend/src/`.
+
+Simply run the same command — the override applies automatically:
+
+```bash
+docker compose up --build
+```
+
+To run without hot-reload (production-parity images only):
+
+```bash
+docker compose -f docker-compose.yml up --build
+```
+
+See [docs/guides/docker.md](docs/guides/docker.md) for full details.
+
 ### Pulling pre-built images (Apple Silicon / arm64)
 
 GHCR images are published as multi-arch manifests covering `linux/amd64` and `linux/arm64`. Docker Desktop on Apple Silicon automatically selects the native arm64 layer — no `--platform` flag needed.
