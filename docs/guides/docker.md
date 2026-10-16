@@ -208,9 +208,71 @@ The `frontend` service uses `condition: service_healthy` so it only starts after
 | File | Purpose |
 |---|---|
 | `docker-compose.yml` | Local development (default) |
+| `docker-compose.override.yml` | **Hot-reload development overrides** (auto-merged by Docker Compose) |
 | `docker-compose.staging.yml` | Staging overrides — apply on top of the base file |
 | `docker-compose.prod.yml` | Production overrides |
 | `docker-compose.test.yml` | Integration test environment |
+
+## Hot-reload development
+
+Docker Compose automatically merges `docker-compose.override.yml` into `docker-compose.yml`
+whenever you run `docker compose up`. The repository ships an override file that:
+
+- Mounts `./backend/src` into the backend container and runs `ts-node-dev` for instant TypeScript
+  hot-reload — no rebuild required on code changes.
+- Mounts `./frontend/src` and `./frontend/public` into the frontend container and runs `next dev`
+  for React Fast Refresh.
+- Sets `NODE_ENV=development` on both services.
+
+### First run (build dev images)
+
+```bash
+docker compose up --build
+```
+
+### Subsequent runs (no rebuild needed)
+
+```bash
+docker compose up
+```
+
+### How it works
+
+```
+docker-compose.yml          ← base configuration (production-style images)
+docker-compose.override.yml ← dev overrides: volume mounts + watch-mode commands
+```
+
+Docker Compose merges both files automatically. The override file is committed to the repository
+and should **not** be added to `.gitignore` — team members receive it automatically when they
+clone or pull.
+
+### Backend hot-reload details
+
+The backend override replaces the production `node server.js` command with:
+
+```bash
+npx ts-node-dev --respawn --transpile-only --watch src src/index.ts
+```
+
+`ts-node-dev` watches the mounted `./backend/src` directory, transpiles TypeScript on the fly,
+and restarts the server when files change. Changes to files outside `src/` (e.g. `package.json`)
+still require a rebuild.
+
+### Frontend hot-reload details
+
+The frontend override replaces the production `next start` command with `next dev`.
+Next.js Fast Refresh picks up React component changes without a full reload, and changes to
+server components trigger an automatic re-render.
+
+### Opting out of hot-reload
+
+To run the production-style images (no source mounts, no watch mode) while in the dev
+environment, explicitly ignore the override file:
+
+```bash
+docker compose -f docker-compose.yml up --build
+```
 
 To run the staging stack:
 

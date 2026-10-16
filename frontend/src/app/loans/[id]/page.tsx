@@ -8,6 +8,7 @@ import DetailSkeleton from '@/components/DetailSkeleton';
 import HealthGauge, { SkeletonHealthGauge } from '@/components/HealthGauge';
 import HealthFactorAlert from '@/components/HealthFactorAlert';
 import { useHealthFactor } from '@/hooks/useHealthFactor';
+import Breadcrumb from '@/components/Breadcrumb';
 
 // Heavy component — loaded lazily to reduce initial JS bundle (#1070)
 const LoanRepaymentCalculator = dynamic(() => import('@/components/LoanRepaymentCalculator'), {
@@ -267,6 +268,7 @@ export default function LoanDetailPage() {
     <main
       className={`mx-auto max-w-2xl px-4 py-10 ${loan.status === 'active' ? 'pb-44 sm:pb-10' : ''}`}
     >
+      <Breadcrumb />
       <Link href="/loans" className="text-brown/60 hover:text-brown text-sm mb-6 inline-block">
         ← Back to Loans
       </Link>

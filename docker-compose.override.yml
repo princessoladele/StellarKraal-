@@ -1,0 +1,42 @@
+# docker-compose.override.yml — Development hot-reload overrides
+#
+# This file is automatically merged with docker-compose.yml when you run
+# `docker compose up`. It mounts the source directories as volumes and
+# switches both services to watch-mode dev servers so that code changes
+# are reflected immediately without rebuilding the image.
+#
+# Usage:
+#   docker compose up --build        # first run (builds dev images)
+#   docker compose up                 # subsequent runs (no rebuild needed)
+#
+# See docs/guides/docker.md#hot-reload for a full walkthrough.
+
+services:
+  backend:
+    # Override the production start command with ts-node-dev for hot reload.
+    # ts-node-dev watches ./src, transpiles on the fly, and restarts on change.
+    command: >
+      sh -c "npm install && npx ts-node-dev --respawn --transpile-only --watch src src/index.ts"
+    volumes:
+      # Mount source code so the container sees live edits without rebuilding.
+      - ./backend/src:/app/src
+      # Preserve the container's node_modules (do NOT mount the host copy).
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - TS_NODE_TRANSPILE_ONLY=true
+
+  frontend:
+    # Override the production start command with next dev for hot reload.
+    command: >
+      sh -c "npm install && npm run dev"
+    volumes:
+      # Mount source code so Next.js Fast Refresh picks up edits immediately.
+      - ./frontend/src:/app/src
+      # Preserve the container's node_modules.
+      - /app/node_modules
+      # Mount public assets so static files update without a rebuild.
+      - ./frontend/public:/app/public
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1

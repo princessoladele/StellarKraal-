@@ -10,6 +10,7 @@ import DetailSkeleton from "@/components/DetailSkeleton";
 import CollateralLocationSection from "@/components/CollateralLocationSection";
 import LiquidationThresholdBadge from "@/components/LiquidationThresholdBadge";
 import { formatXlmNumber } from "@/lib/formatMoney";
+import Breadcrumb from "@/components/Breadcrumb";
 
 // Heavy components — loaded lazily to reduce initial JS bundle (#1070)
 const PriceChart = dynamic(
@@ -49,8 +50,12 @@ interface CollateralRecord {
   appraised_value: number;
   appraisal_history: AppraisalEntry[];
   createdAt: string;
-  /** Optional GPS / text location — shown in location placeholder section (#568). */
+  /** Optional GPS / text location — shown in location section (#568, #1253). */
   location?: string | null;
+  /** GPS latitude — used to render the Leaflet map (#1253). */
+  latitude?: number | null;
+  /** GPS longitude — used to render the Leaflet map (#1253). */
+  longitude?: number | null;
   /** Liquidation threshold in bps from the backend, e.g. 8000 = 80% (#697). */
   liquidation_threshold_bps?: number | null;
 }
@@ -161,6 +166,7 @@ export default function CollateralDetailPage() {
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-10" data-print="content">
+      <Breadcrumb />
       <Link
         href="/dashboard"
         className="text-brown/60 hover:text-brown text-sm mb-6 inline-block no-print"
@@ -310,8 +316,13 @@ export default function CollateralDetailPage() {
       {/* Liquidation threshold — #697 */}
       <LiquidationThresholdBadge thresholdBps={record.liquidation_threshold_bps} />
 
-      {/* Location placeholder — #568 */}
-      <CollateralLocationSection location={record.location} />
+      {/* Location map — #1253 */}
+      <CollateralLocationSection
+        location={record.location}
+        latitude={record.latitude}
+        longitude={record.longitude}
+        animalType={record.animal_type}
+      />
     </main>
   );
 }
