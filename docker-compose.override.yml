@@ -1,42 +1,53 @@
-# docker-compose.override.yml — Development hot-reload overrides
+# docker-compose.override.yml — Hot-reload development overrides
 #
 # This file is automatically merged with docker-compose.yml when you run
-# `docker compose up`. It mounts the source directories as volumes and
-# switches both services to watch-mode dev servers so that code changes
-# are reflected immediately without rebuilding the image.
+# `docker compose up`. It replaces the built images with volume mounts and
+# watch-mode commands so that source changes are reflected instantly.
+#
+# Issue #1264 — Add hot-reload support for local development.
 #
 # Usage:
-#   docker compose up --build        # first run (builds dev images)
-#   docker compose up                 # subsequent runs (no rebuild needed)
+#   docker compose up --build
 #
-# See docs/guides/docker.md#hot-reload for a full walkthrough.
+# To use the base file without these overrides (e.g. for staging parity):
+#   docker compose -f docker-compose.yml up --build
 
 services:
   backend:
-    # Override the production start command with ts-node-dev for hot reload.
-    # ts-node-dev watches ./src, transpiles on the fly, and restarts on change.
+    # Override the production command with ts-node-dev for hot reloading.
+    # ts-node-dev watches src/ and restarts the server on changes.
     command: >
-      sh -c "npm install && npx ts-node-dev --respawn --transpile-only --watch src src/index.ts"
+      sh -c "npm run migrate:dev && npx ts-node-dev --respawn --transpile-only src/index.ts"
+    # Mount the source directory so edits on the host are reflected in the container.
     volumes:
-      # Mount source code so the container sees live edits without rebuilding.
-      - ./backend/src:/app/src
-      # Preserve the container's node_modules (do NOT mount the host copy).
-      - /app/node_modules
+      - ./backend/src:/app/src:cached
+      - ./backend/package.json:/app/package.json:ro
+      - ./backend/tsconfig.json:/app/tsconfig.json:ro
     environment:
       - NODE_ENV=development
-      - TS_NODE_TRANSPILE_ONLY=true
+      - TS_NODE_DEV=true
+    # Do not build from Dockerfile — use a Node image with devDependencies installed.
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: deps
 
   frontend:
-    # Override the production start command with next dev for hot reload.
+    # Override the production start command with next dev for hot reloading.
     command: >
-      sh -c "npm install && npm run dev"
+      sh -c "npm run dev"
+    # Mount the source directory and public assets so edits are picked up immediately.
     volumes:
-      # Mount source code so Next.js Fast Refresh picks up edits immediately.
-      - ./frontend/src:/app/src
-      # Preserve the container's node_modules.
-      - /app/node_modules
-      # Mount public assets so static files update without a rebuild.
-      - ./frontend/public:/app/public
+      - ./frontend/src:/app/src:cached
+      - ./frontend/public:/app/public:cached
+      - ./frontend/package.json:/app/package.json:ro
+      - ./frontend/tsconfig.json:/app/tsconfig.json:ro
+      - ./frontend/next.config.js:/app/next.config.js:ro
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js:ro
     environment:
       - NODE_ENV=development
       - NEXT_TELEMETRY_DISABLED=1
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: deps

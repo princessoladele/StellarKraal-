@@ -1,7 +1,19 @@
 'use client';
-import { Suspense, useEffect, useState } from 'react';
+/**
+ * LoansListClient — sortable, responsive loan list (closes #1244).
+ *
+ * Acceptance criteria:
+ *  ✓ Sortable columns: Status, Amount, Created At, Health Factor
+ *  ✓ Sort direction toggled by clicking the column header
+ *  ✓ Sort state reflected in URL query params (?sortBy=amount&sortDir=asc)
+ *  ✓ On screens < 640 px, table switches to card layout
+ *  ✓ Accessible: column headers use aria-sort
+ */
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Download } from 'lucide-react';
+import { Download, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
+import Link from 'next/link';
 import SearchFilterBar from '@/components/SearchFilterBar';
 import PageTransition from '@/components/PageTransition';
 import Card from '@/components/Card';
@@ -9,38 +21,62 @@ import ScrollToTopButton from '@/components/ScrollToTopButton';
 import Spinner from '@/components/Spinner';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
+import { useSearchFilter } from '@/hooks/useSearchFilter';
+import { useI18n } from '@/context/I18nContext';
 import { toCsvString, downloadCsv, csvFilename, type CsvColumn } from '@/lib/exportCsv';
+
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Loan {
   id: string;
   borrower: string;
   amount: number;
   status: string;
+  health_factor?: number | null;
   collateralId?: string;
   createdAt: string;
   updatedAt?: string;
 }
 
-const STATUS_OPTIONS = ['active', 'repaid', 'liquidated', 'pending'];
-const TYPE_OPTIONS: string[] = [];
-/** Max XLM slider bound — adjust if portfolio amounts grow beyond 100k */
-const MAX_AMOUNT = 100_000;
+type SortKey = 'status' | 'amount' | 'createdAt' | 'health_factor';
+type SortDir = 'asc' | 'desc';
 
-/** CSV column definitions for loan export — closes #1203 */
+const SORTABLE_COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'status', label: 'Status' },
+  { key: 'amount', label: 'Amount' },
+  { key: 'createdAt', label: 'Created At' },
+  { key: 'health_factor', label: 'Health Factor' },
+];
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const STATUS_OPTIONS = ['active', 'at_risk', 'paused', 'repaid', 'liquidated', 'pending'];
+const TYPE_OPTIONS: string[] = [];
+
+/** CSV column definitions for loan export */
 const LOAN_CSV_COLUMNS: CsvColumn<Loan>[] = [
   { header: 'Loan ID', value: (loan) => loan.id },
   { header: 'Status', value: (loan) => loan.status },
   { header: 'Amount (XLM)', value: (loan) => String(loan.amount) },
+  { header: 'Health Factor', value: (loan) => loan.health_factor != null ? String(loan.health_factor) : '' },
   { header: 'Collateral ID', value: (loan) => loan.collateralId ?? '' },
   { header: 'Created At', value: (loan) => loan.createdAt },
   { header: 'Updated At', value: (loan) => loan.updatedAt ?? '' },
 ];
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Maps loan status to design-token badge classes (WCAG AA compliant). */
 function statusBadgeClasses(status: string): string {
   switch (status) {
     case 'active':
       return 'bg-success-light text-success-dark';
+    case 'at_risk':
+      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300';
+    case 'paused':
+      return 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300';
     case 'repaid':
       return 'bg-gold-100 text-gold-700 dark:bg-gold-900/40 dark:text-gold-300';
     case 'liquidated':
@@ -50,7 +86,7 @@ function statusBadgeClasses(status: string): string {
   }
 }
 
-/** Inline status badge rendered inside the Card `badge` slot. */
+/** Inline status badge */
 function LoanStatusBadge({ status, reduced }: { status: string; reduced: boolean | null }) {
   return (
     <motion.span
@@ -60,19 +96,44 @@ function LoanStatusBadge({ status, reduced }: { status: string; reduced: boolean
       animate="animate"
       className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${statusBadgeClasses(status)}`}
     >
-      {status}
+      {status.replace('_', ' ')}
     </motion.span>
   );
 }
 
-/** Export button that generates a CSV of the currently-filtered loan list. */
+/** Sort loans by the selected column and direction. */
+function sortLoans(loans: Loan[], key: SortKey, dir: SortDir): Loan[] {
+  return [...loans].sort((a, b) => {
+    let cmp = 0;
+    switch (key) {
+      case 'status':
+        cmp = a.status.localeCompare(b.status);
+        break;
+      case 'amount':
+        cmp = a.amount - b.amount;
+        break;
+      case 'createdAt':
+        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        break;
+      case 'health_factor': {
+        const aHf = a.health_factor ?? -Infinity;
+        const bHf = b.health_factor ?? -Infinity;
+        cmp = aHf - bHf;
+        break;
+      }
+    }
+    return dir === 'asc' ? cmp : -cmp;
+  });
+}
+
+// ── Export button ──────────────────────────────────────────────────────────────
+
 function ExportCsvButton({ loans }: { loans: Loan[] }) {
   const [exporting, setExporting] = useState(false);
 
   async function handleExport() {
     setExporting(true);
     try {
-      // Small async yield so the browser can re-render the disabled/spinner state
       await Promise.resolve();
       const csv = toCsvString(loans, LOAN_CSV_COLUMNS);
       downloadCsv(csv, csvFilename('loans'));
@@ -103,24 +164,203 @@ function ExportCsvButton({ loans }: { loans: Loan[] }) {
   );
 }
 
+// ── Sort indicator icon ────────────────────────────────────────────────────────
+
+function SortIcon({ column, sortBy, sortDir }: { column: SortKey; sortBy: SortKey; sortDir: SortDir }) {
+  if (column !== sortBy) {
+    return <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" aria-hidden="true" />;
+  }
+  return sortDir === 'asc'
+    ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+    : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />;
+}
+
+// ── Table (≥ 640 px) ───────────────────────────────────────────────────────────
+
+function LoansTable({
+  loans,
+  sortBy,
+  sortDir,
+  onSort,
+  reduced,
+  t,
+}: {
+  loans: Loan[];
+  sortBy: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
+  reduced: boolean | null;
+  t: (key: string, fallback?: string) => string;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-brown/10 dark:border-brown-700 shadow-sm">
+      <table className="w-full text-sm" aria-label={t('loans.title', 'Loans')}>
+        <thead className="bg-brown/5 dark:bg-brown-800/50">
+          <tr>
+            {/* Non-sortable ID column */}
+            <th
+              scope="col"
+              className="px-4 py-3 text-left font-semibold text-brown/70 dark:text-cream/70 whitespace-nowrap"
+            >
+              Loan ID
+            </th>
+
+            {SORTABLE_COLUMNS.map(({ key, label }) => (
+              <th
+                key={key}
+                scope="col"
+                aria-sort={
+                  sortBy === key
+                    ? sortDir === 'asc'
+                      ? 'ascending'
+                      : 'descending'
+                    : 'none'
+                }
+                className="px-4 py-3 text-left font-semibold text-brown/70 dark:text-cream/70 whitespace-nowrap"
+              >
+                <button
+                  type="button"
+                  onClick={() => onSort(key)}
+                  className="inline-flex items-center gap-1.5 hover:text-brown dark:hover:text-cream transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded"
+                  aria-label={`Sort by ${label}${sortBy === key ? `, currently ${sortDir === 'asc' ? 'ascending' : 'descending'}` : ''}`}
+                >
+                  {label}
+                  <SortIcon column={key} sortBy={sortBy} sortDir={sortDir} />
+                </button>
+              </th>
+            ))}
+
+            {/* Borrower */}
+            <th
+              scope="col"
+              className="px-4 py-3 text-left font-semibold text-brown/70 dark:text-cream/70 whitespace-nowrap"
+            >
+              Borrower
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-brown/10 dark:divide-brown-700">
+          {loans.map((loan) => (
+            <tr
+              key={loan.id}
+              className="bg-white dark:bg-brown-900 hover:bg-brown/5 dark:hover:bg-brown-800 transition-colors"
+            >
+              <td className="px-4 py-3 font-mono text-xs text-brown dark:text-cream">
+                <Link
+                  href={`/loans/${loan.id}`}
+                  className="hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded"
+                >
+                  #{loan.id.slice(0, 8)}
+                </Link>
+              </td>
+              <td className="px-4 py-3">
+                <LoanStatusBadge status={loan.status} reduced={reduced} />
+              </td>
+              <td className="px-4 py-3 font-medium text-brown dark:text-cream tabular-nums">
+                {(loan.amount / 1e7).toFixed(2)} XLM
+              </td>
+              <td className="px-4 py-3 text-brown/70 dark:text-cream/70 tabular-nums">
+                {new Date(loan.createdAt).toLocaleDateString()}
+              </td>
+              <td className="px-4 py-3 text-brown/70 dark:text-cream/70 tabular-nums">
+                {loan.health_factor != null
+                  ? (loan.health_factor > 100
+                    ? (loan.health_factor / 10_000).toFixed(2)
+                    : loan.health_factor.toFixed(2)) + 'x'
+                  : '—'}
+              </td>
+              <td className="px-4 py-3 font-mono text-xs text-brown/60 dark:text-cream/60 truncate max-w-[10rem]">
+                {loan.borrower.slice(0, 6)}…{loan.borrower.slice(-4)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Card list (< 640 px) ───────────────────────────────────────────────────────
+
+function LoansCardList({
+  loans,
+  reduced,
+  t,
+}: {
+  loans: Loan[];
+  reduced: boolean | null;
+  t: (key: string, fallback?: string) => string;
+}) {
+  return (
+    <ul className="space-y-2" aria-label={t('loans.title', 'Loans')}>
+      {loans.map((loan) => (
+        <li key={loan.id}>
+          <Link href={`/loans/${loan.id}`} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded-xl">
+            <Card
+              title={`${t('loans.loanId', 'Loan')} #${loan.id}`}
+              subtitle={`${loan.borrower.slice(0, 6)}…${loan.borrower.slice(-4)}`}
+              badge={<LoanStatusBadge status={loan.status} reduced={reduced} />}
+              action={
+                <div className="text-right space-y-0.5">
+                  <p className="text-sm font-medium text-brown-700 dark:text-cream-100 tabular-nums">
+                    {(loan.amount / 1e7).toFixed(2)} XLM
+                  </p>
+                  {loan.health_factor != null && (
+                    <p className="text-xs text-brown/50 dark:text-cream/50 tabular-nums">
+                      HF {loan.health_factor > 100
+                        ? (loan.health_factor / 10_000).toFixed(2)
+                        : loan.health_factor.toFixed(2)}x
+                    </p>
+                  )}
+                </div>
+              }
+              aria-label={`${t('loans.loanId', 'Loan')} ${loan.id}, ${loan.status}, ${(loan.amount / 1e7).toFixed(2)} XLM`}
+            />
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ── Main list content ──────────────────────────────────────────────────────────
+
 function LoanListContent() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const reduced = useReducedMotion();
   const { t } = useI18n();
 
-  // Derive dynamic min/max amounts from loaded loans
-  const [amountRange, setAmountRange] = useState<[number, number]>([0, 0]);
-  const [selectedAmountRange, setSelectedAmountRange] = useState<[number, number]>([0, 0]);
+  // Sort state — read from URL query params
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
-  // useSearchFilter manages query, status chips, date range, and URL sync
-  // SearchFilterBar renders its own instance that writes to URL; this instance
-  // reads back from the URL so LoanListContent can filter the in-memory list.
+  const sortByParam = (searchParams.get('sortBy') ?? 'createdAt') as SortKey;
+  const sortDirParam = (searchParams.get('sortDir') ?? 'desc') as SortDir;
+
+  const validSortKeys: SortKey[] = ['status', 'amount', 'createdAt', 'health_factor'];
+  const sortBy: SortKey = validSortKeys.includes(sortByParam) ? sortByParam : 'createdAt';
+  const sortDir: SortDir = sortDirParam === 'asc' ? 'asc' : 'desc';
+
+  const handleSort = useCallback(
+    (key: SortKey) => {
+      const newDir: SortDir =
+        sortBy === key ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc';
+
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('sortBy', key);
+      params.set('sortDir', newDir);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [sortBy, sortDir, router, pathname, searchParams]
+  );
+
+  // Filter state from URL
   const {
     filters,
     debouncedQuery,
     clearAll,
-    hasActiveFilters,
   } = useSearchFilter();
 
   useEffect(() => {
@@ -130,50 +370,30 @@ function LoanListContent() {
       .then((data: Loan[]) => {
         const list = Array.isArray(data) ? data : [];
         setLoans(list);
-        if (list.length > 0) {
-          const amounts = list.map((l) => l.amount);
-          const minAmt = Math.min(...amounts);
-          const maxAmt = Math.max(...amounts);
-          setAmountRange([minAmt, maxAmt]);
-          setSelectedAmountRange([minAmt, maxAmt]);
-        }
       })
       .catch(() => setLoans([]))
       .finally(() => setLoading(false));
   }, []);
 
-  const hasAmountFilter =
-    amountRange[0] !== amountRange[1] &&
-    (selectedAmountRange[0] !== amountRange[0] || selectedAmountRange[1] !== amountRange[1]);
-
+  // Filter
   const filtered = loans.filter((loan) => {
-    // Text search: ID or collateral ID (case-insensitive)
     const matchesQuery =
       !debouncedQuery ||
       loan.id.toLowerCase().includes(debouncedQuery.toLowerCase()) ||
       loan.borrower.toLowerCase().includes(debouncedQuery.toLowerCase());
 
-    // Status chip filter
     const matchesStatus =
       filters.statuses.length === 0 || filters.statuses.includes(loan.status);
 
-    // Amount range filter
-    const matchesAmount =
-      !hasAmountFilter ||
-      (loan.amount >= selectedAmountRange[0] && loan.amount <= selectedAmountRange[1]);
-
-    // Date range filter
     const loanDate = new Date(loan.createdAt);
     const matchesDateFrom = !filters.dateFrom || loanDate >= new Date(filters.dateFrom);
     const matchesDateTo = !filters.dateTo || loanDate <= new Date(filters.dateTo);
 
-    return matchesQuery && matchesStatus && matchesAmount && matchesDateFrom && matchesDateTo;
+    return matchesQuery && matchesStatus && matchesDateFrom && matchesDateTo;
   });
 
-  const handleClearAll = () => {
-    clearAll();
-    setSelectedAmountRange(amountRange);
-  };
+  // Sort
+  const sorted = sortLoans(filtered, sortBy, sortDir);
 
   return (
     <div className="space-y-4">
@@ -181,41 +401,44 @@ function LoanListContent() {
         <SearchFilterBar
           statusOptions={STATUS_OPTIONS}
           typeOptions={TYPE_OPTIONS}
-          searchPlaceholder="Search by loan ID, borrower, or status…"
+          searchPlaceholder="Search by loan ID or borrower…"
         />
-        {/* Export button — closes #1203: active filters applied before export */}
-        <ExportCsvButton loans={filtered} />
+        <ExportCsvButton loans={sorted} />
       </div>
+
       {loading ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
           {t('loans.loading', 'Loading…')}
         </p>
-      ) : filtered.length === 0 ? (
+      ) : sorted.length === 0 ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
           {t('loans.noResults', 'No loans match your filters.')}
         </p>
       ) : (
-        <ul className="space-y-2" aria-label={t('loans.title', 'Loans')}>
-          {filtered.map((loan) => (
-            <li key={loan.id}>
-              <Card
-                title={`${t('loans.loanId', 'Loan')} #${loan.id}`}
-                subtitle={loan.borrower}
-                badge={<LoanStatusBadge status={loan.status} reduced={reduced} />}
-                action={
-                  <span className="text-sm font-medium text-brown-700 dark:text-cream-100">
-                    {loan.amount.toLocaleString()} XLM
-                  </span>
-                }
-                aria-label={`${t('loans.loanId', 'Loan')} ${loan.id}, ${loan.status}, ${loan.amount.toLocaleString()} XLM`}
-              />
-            </li>
-          ))}
-        </ul>
+        <>
+          {/* Table layout — visible on sm and up (≥ 640 px) */}
+          <div className="hidden sm:block" data-testid="loans-table">
+            <LoansTable
+              loans={sorted}
+              sortBy={sortBy}
+              sortDir={sortDir}
+              onSort={handleSort}
+              reduced={reduced}
+              t={t}
+            />
+          </div>
+
+          {/* Card layout — visible below sm (< 640 px) */}
+          <div className="block sm:hidden" data-testid="loans-cards">
+            <LoansCardList loans={sorted} reduced={reduced} t={t} />
+          </div>
+        </>
       )}
     </div>
   );
 }
+
+// ── Page shell ─────────────────────────────────────────────────────────────────
 
 export default function LoansListClient() {
   useScrollPosition();
@@ -223,13 +446,13 @@ export default function LoansListClient() {
 
   return (
     <PageTransition>
-      <main className="max-w-3xl mx-auto px-4 py-10">
+      <main className="max-w-5xl mx-auto px-4 py-10">
         <h1 className="text-3xl font-bold text-brown mb-6">{t('loans.title', 'Loans')}</h1>
         <Suspense
           fallback={
-            <ul className="space-y-3 mt-4" aria-busy="true" aria-label="Loading loans">
+            <div className="space-y-2 mt-4" aria-busy="true" aria-label="Loading loans">
               {[...Array(5)].map((_, i) => (
-                <li
+                <div
                   key={i}
                   className="bg-white dark:bg-brown-900 rounded-xl p-4 shadow-sm border border-brown/10 flex justify-between items-center"
                   aria-hidden="true"
@@ -242,9 +465,9 @@ export default function LoansListClient() {
                     <div className="skeleton-shimmer rounded h-4 w-20" />
                     <div className="skeleton-shimmer rounded h-5 w-16 rounded-full" />
                   </div>
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           }
         >
           <LoanListContent />

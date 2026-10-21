@@ -1,29 +1,33 @@
 /**
- * CollateralLocationSection — Issue #1253
+ * CollateralLocationSection — Issues #568 / #1253
  *
- * Renders a Leaflet map showing the animal's registered GPS location.
- * Falls back to showing the raw location string when coordinates are absent
- * but a location string is provided. Hidden entirely when no location data
- * exists at all.
+ * Renders the location section on the Collateral Detail page.
+ *
+ * Behaviour:
+ *  - Hidden entirely when no location data exists.
+ *  - Shows an interactive Leaflet map when both latitude and longitude are
+ *    present (Issue #1253).
+ *  - Falls back to the text location string when GPS coords are missing but
+ *    a location string exists.
  *
  * Acceptance criteria:
  *  ✓ Leaflet map rendered when latitude and longitude are present
  *  ✓ Map marker uses the animal type icon
  *  ✓ Map hidden when coordinates are absent
  *  ✓ Map tiles loaded via OpenStreetMap (no API key required)
- *  ✓ Map is keyboard accessible (tabIndex + role="application" on map div)
+ *  ✓ Map is keyboard accessible
  */
 'use client';
 
 import dynamic from 'next/dynamic';
 
-// Dynamically import so Leaflet (which accesses `window`) is never SSR-rendered.
-const LeafletMap = dynamic(() => import('@/components/LeafletMap'), {
+// Leaflet requires a browser environment — load the map lazily with no SSR.
+const CollateralMap = dynamic(() => import('@/components/CollateralMap'), {
   ssr: false,
   loading: () => (
     <div
-      role="img"
-      aria-label="Map loading…"
+      role="status"
+      aria-label="Loading map…"
       className="w-full h-64 rounded-xl animate-pulse"
       style={{ backgroundColor: 'var(--color-skeleton-base, #e8ddd0)' }}
     />
@@ -31,13 +35,13 @@ const LeafletMap = dynamic(() => import('@/components/LeafletMap'), {
 });
 
 interface Props {
-  /** Optional location description string. Shown when coordinates are absent. */
+  /** Optional text location. Section is hidden when both this and GPS coords are absent. */
   location?: string | null;
-  /** GPS latitude — map is rendered when both lat and lng are present. */
+  /** Optional GPS latitude. */
   latitude?: number | null;
-  /** GPS longitude — map is rendered when both lat and lng are present. */
+  /** Optional GPS longitude. */
   longitude?: number | null;
-  /** Animal type passed to the map marker icon. */
+  /** Optional animal type — used to pick the marker icon. */
   animalType?: string;
 }
 
@@ -47,11 +51,11 @@ export default function CollateralLocationSection({
   longitude,
   animalType,
 }: Props) {
-  const hasCoordinates =
-    latitude != null && longitude != null && isFinite(latitude) && isFinite(longitude);
+  const hasGps = latitude != null && longitude != null;
+  const hasLocation = hasGps || location != null;
 
-  // Hidden entirely when there is no location data of any kind.
-  if (!hasCoordinates && !location) return null;
+  // Hidden when there is no location data at all
+  if (!hasLocation) return null;
 
   return (
     <section
@@ -66,26 +70,47 @@ export default function CollateralLocationSection({
         Location
       </h2>
 
-      {hasCoordinates ? (
-        <>
-          <LeafletMap
-            latitude={latitude as number}
-            longitude={longitude as number}
-            animalType={animalType}
-          />
-          <p
-            className="mt-3 text-sm tabular-nums"
-            style={{ color: 'var(--color-text-muted, #8B5A1F)' }}
-          >
-            {(latitude as number).toFixed(6)}, {(longitude as number).toFixed(6)}
-          </p>
-        </>
+      {hasGps ? (
+        /* Interactive Leaflet map — shown when GPS coordinates are available */
+        <CollateralMap
+          latitude={latitude as number}
+          longitude={longitude as number}
+          animalType={animalType}
+        />
       ) : (
-        // Coordinates absent but a text location string was provided.
-        <p
-          className="text-sm"
-          style={{ color: 'var(--color-text-muted, #8B5A1F)' }}
+        /* Placeholder skeleton — shown when only a text location exists */
+        <div
+          role="img"
+          aria-label="Map placeholder — GPS coordinates not available"
+          className="relative w-full h-40 rounded-xl overflow-hidden"
+          style={{ backgroundColor: 'var(--color-skeleton-base, #e8ddd0)' }}
         >
+          <div
+            className="absolute inset-0 animate-pulse opacity-50"
+            style={{
+              background:
+                'linear-gradient(90deg, transparent 0%, var(--color-skeleton-shine, #f5ede0) 50%, transparent 100%)',
+            }}
+            aria-hidden="true"
+          />
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-1"
+            aria-hidden="true"
+          >
+            <span className="text-4xl">🗺️</span>
+            <span
+              className="text-sm font-medium"
+              style={{ color: 'var(--color-text-muted, #8B5A1F)' }}
+            >
+              GPS coordinates not available
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Display the raw location string when one is provided */}
+      {location && (
+        <p className="mt-3 text-sm" style={{ color: 'var(--color-text-muted, #8B5A1F)' }}>
           {location}
         </p>
       )}

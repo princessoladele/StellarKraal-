@@ -207,68 +207,34 @@ The `frontend` service uses `condition: service_healthy` so it only starts after
 
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | Local development (default) |
-| `docker-compose.override.yml` | **Hot-reload development overrides** (auto-merged by Docker Compose) |
+| `docker-compose.yml` | Base configuration (production-style images) |
+| `docker-compose.override.yml` | **Hot-reload overrides** — applied automatically during `docker compose up` |
 | `docker-compose.staging.yml` | Staging overrides — apply on top of the base file |
 | `docker-compose.prod.yml` | Production overrides |
 | `docker-compose.test.yml` | Integration test environment |
 
-## Hot-reload development
+### Hot reload with docker-compose.override.yml
 
-Docker Compose automatically merges `docker-compose.override.yml` into `docker-compose.yml`
-whenever you run `docker compose up`. The repository ships an override file that:
+The `docker-compose.override.yml` file is committed to the repository and is automatically merged by Docker Compose whenever you run `docker compose up`. It replaces the built production images with volume mounts and watch-mode commands for a fast development feedback loop.
 
-- Mounts `./backend/src` into the backend container and runs `ts-node-dev` for instant TypeScript
-  hot-reload — no rebuild required on code changes.
-- Mounts `./frontend/src` and `./frontend/public` into the frontend container and runs `next dev`
-  for React Fast Refresh.
-- Sets `NODE_ENV=development` on both services.
+**What it does:**
 
-### First run (build dev images)
+| Service | Command | Mounted paths |
+|---|---|---|
+| `backend` | `ts-node-dev --respawn --transpile-only src/index.ts` | `./backend/src` |
+| `frontend` | `next dev` | `./frontend/src`, `./frontend/public` |
+
+Any change you save to a file in `./backend/src/` restarts the backend server automatically via `ts-node-dev`. Any change to `./frontend/src/` triggers Next.js Fast Refresh in the browser without a full reload.
+
+**Start the hot-reload stack:**
 
 ```bash
 docker compose up --build
 ```
 
-### Subsequent runs (no rebuild needed)
+The override file is picked up automatically — no extra flags needed.
 
-```bash
-docker compose up
-```
-
-### How it works
-
-```
-docker-compose.yml          ← base configuration (production-style images)
-docker-compose.override.yml ← dev overrides: volume mounts + watch-mode commands
-```
-
-Docker Compose merges both files automatically. The override file is committed to the repository
-and should **not** be added to `.gitignore` — team members receive it automatically when they
-clone or pull.
-
-### Backend hot-reload details
-
-The backend override replaces the production `node server.js` command with:
-
-```bash
-npx ts-node-dev --respawn --transpile-only --watch src src/index.ts
-```
-
-`ts-node-dev` watches the mounted `./backend/src` directory, transpiles TypeScript on the fly,
-and restarts the server when files change. Changes to files outside `src/` (e.g. `package.json`)
-still require a rebuild.
-
-### Frontend hot-reload details
-
-The frontend override replaces the production `next start` command with `next dev`.
-Next.js Fast Refresh picks up React component changes without a full reload, and changes to
-server components trigger an automatic re-render.
-
-### Opting out of hot-reload
-
-To run the production-style images (no source mounts, no watch mode) while in the dev
-environment, explicitly ignore the override file:
+**Start without hot-reload overrides** (production-parity images):
 
 ```bash
 docker compose -f docker-compose.yml up --build

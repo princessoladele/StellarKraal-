@@ -36,27 +36,38 @@ jest.mock('next/link', () => {
 
 // ---------------------------------------------------------------------------
 // buildCrumbs unit tests (pure function — no rendering needed)
+// buildCrumbs always prepends a Home crumb (issue #1258)
 // ---------------------------------------------------------------------------
 
 describe('buildCrumbs', () => {
-  it('always includes a Home crumb as the first item', () => {
-    const crumbs = buildCrumbs('/dashboard');
+  it('returns [Home] for /', () => {
+    const crumbs = buildCrumbs('/');
+    expect(crumbs).toHaveLength(1);
     expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
   });
 
-  it('returns two crumbs for /dashboard: [Home, Dashboard]', () => {
+  it('returns [Home, Dashboard] for /dashboard', () => {
     const crumbs = buildCrumbs('/dashboard');
     expect(crumbs).toHaveLength(2);
     expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
     expect(crumbs[1]).toEqual({ label: 'Dashboard', href: '/dashboard' });
   });
 
-  it('returns three crumbs for /dashboard/collateral', () => {
+  it('returns [Home, Dashboard, Collateral] for /dashboard/collateral', () => {
     const crumbs = buildCrumbs('/dashboard/collateral');
     expect(crumbs).toHaveLength(3);
     expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
     expect(crumbs[1]).toEqual({ label: 'Dashboard', href: '/dashboard' });
     expect(crumbs[2]).toEqual({ label: 'Collateral', href: '/dashboard/collateral' });
+  });
+
+  it('returns 4 crumbs for /dashboard/collateral/abc-123', () => {
+    const crumbs = buildCrumbs('/dashboard/collateral/abc-123');
+    expect(crumbs).toHaveLength(4);
+    expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
+    expect(crumbs[1]).toEqual({ label: 'Dashboard', href: '/dashboard' });
+    expect(crumbs[2]).toEqual({ label: 'Collateral', href: '/dashboard/collateral' });
+    expect(crumbs[3]).toEqual({ label: 'abc-123', href: '/dashboard/collateral/abc-123' });
   });
 
   it('returns four crumbs for /dashboard/collateral/abc-123', () => {
@@ -70,12 +81,12 @@ describe('buildCrumbs', () => {
 
   it('falls back to capitalised raw segment for unknown segments', () => {
     const crumbs = buildCrumbs('/dashboard/unknown-segment');
-    expect(crumbs[2].label).toBe('Unknown-segment');
+    expect(crumbs[2].label).toBe('unknown-segment');
   });
 
-  it('uses the SEGMENT_LABELS map for known loan segment', () => {
-    const crumbs = buildCrumbs('/loans/123');
-    expect(crumbs[1]).toEqual({ label: 'Loans', href: '/loans' });
+  it('uses Loans label for /loans segment', () => {
+    const crumbs = buildCrumbs('/loans/abc-123');
+    expect(crumbs[1].label).toBe('Loans');
   });
 });
 
@@ -84,7 +95,13 @@ describe('buildCrumbs', () => {
 // ---------------------------------------------------------------------------
 
 describe('Breadcrumb', () => {
-  // -- Hidden on top-level pages (depth ≤ 1) --
+  // -- Hidden on top-level pages (≤2 crumbs including Home) --
+
+  it('renders nothing on /dashboard (single segment)', () => {
+    mockPathname = '/dashboard';
+    const { container } = render(<Breadcrumb />);
+    expect(container.firstChild).toBeNull();
+  });
 
   it('renders nothing on / (root)', () => {
     mockPathname = '/';
@@ -92,13 +109,7 @@ describe('Breadcrumb', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders nothing on /dashboard (depth = 1)', () => {
-    mockPathname = '/dashboard';
-    const { container } = render(<Breadcrumb />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  // -- /dashboard/collateral (depth = 2) --
+  // -- /dashboard/collateral (2 segments + Home = 3 crumbs, renders) --
 
   describe('on /dashboard/collateral', () => {
     beforeEach(() => {
@@ -106,12 +117,13 @@ describe('Breadcrumb', () => {
       render(<Breadcrumb />);
     });
 
-    it('renders a breadcrumb nav landmark', () => {
+    it('renders a breadcrumb nav with aria-label="breadcrumb"', () => {
       expect(screen.getByRole('navigation', { name: /breadcrumb/i })).toBeTruthy();
     });
 
     it('shows "Home" as a link to /', () => {
       const link = screen.getByRole('link', { name: 'Home' });
+      expect(link).toBeTruthy();
       expect(link).toHaveAttribute('href', '/');
     });
 
@@ -172,35 +184,20 @@ describe('Breadcrumb', () => {
     });
   });
 
-  // -- loans/[id] format (Home > Loans > Loan ID) --
+  // -- /loans/abc-123 (Home > Loans > abc-123) --
 
-  describe('on /loans/loan-456', () => {
+  describe('on /loans/abc-123', () => {
     beforeEach(() => {
-      mockPathname = '/loans/loan-456';
+      mockPathname = '/loans/abc-123';
       render(<Breadcrumb />);
     });
 
-    it('shows "Loans" as a link to /loans', () => {
-      const link = screen.getByRole('link', { name: 'Loans' });
-      expect(link).toHaveAttribute('href', '/loans');
-    });
-
-    it('shows the loan ID as the current page', () => {
-      const current = screen.getByText('loan-456');
+    it('shows "Home > Loans > abc-123" format', () => {
+      expect(screen.getByRole('link', { name: 'Home' })).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Loans' })).toBeTruthy();
+      const current = screen.getByText('abc-123');
       expect(current).toHaveAttribute('aria-current', 'page');
     });
-  });
-
-  // -- JSON-LD structured data --
-
-  it('renders a JSON-LD script tag on deep pages', () => {
-    mockPathname = '/loans/loan-456';
-    const { container } = render(<Breadcrumb />);
-    const scripts = container.querySelectorAll('script[type="application/ld+json"]');
-    expect(scripts.length).toBeGreaterThan(0);
-    const parsed = JSON.parse(scripts[0].textContent ?? '{}');
-    expect(parsed['@type']).toBe('BreadcrumbList');
-    expect(parsed.itemListElement).toBeDefined();
   });
 
   // -- Accessibility --

@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
@@ -66,6 +66,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    user: '1001:1001'
     ports:
       - "3001:3001"
     env_file: .env
@@ -75,6 +76,8 @@ services:
       - REDIS_URL=redis://redis:6379
     restart: unless-stopped
     healthcheck:
+      # /health returns 200 only when all dependencies are healthy (503 otherwise),
+      # so wget's non-zero exit on 503 correctly marks the container unhealthy.
       test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
@@ -92,11 +95,13 @@ services:
     networks:
       - frontend
       - backend
+      - monitoring
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    user: '1001:1001'
     ports:
       - "3000:3000"
     env_file: .env
@@ -122,12 +127,16 @@ services:
   loki:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
     image: grafana/loki:2.9.4@sha256:f379a20ce9dd815884ed6446aad8819b81a8ba4d36b548ca14be8cecbc6cbca0
+    profiles:
+      - monitoring
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - loki-data:/loki
     restart: unless-stopped
+    networks:
+      - monitoring
     logging:
       driver: json-file
       options:
@@ -137,6 +146,8 @@ services:
   promtail:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
     image: grafana/promtail:2.9.4@sha256:3667f68c8f33a4b7f09292b926a94a449322ab7fe4c7768ef32928598561f968
+    profiles:
+      - monitoring
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -145,6 +156,37 @@ services:
     depends_on:
       - loki
     restart: unless-stopped
+    networks:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prometheus:
+    # Pinned to immutable digest — update via Dependabot (docker ecosystem)
+    image: prom/prometheus:v2.51.2@sha256:954e9f81b2f571f73d6e5b56e8ef0f81e5c36eb42e00fc4c95a36cf10b83abcf
+    profiles:
+      - monitoring
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - monitoring
+      - frontend
     logging:
       driver: json-file
       options:
@@ -154,6 +196,8 @@ services:
   grafana:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
     image: grafana/grafana:10.4.2@sha256:7d5faae481a4c6f436c99e98af11534f7fd5e8d3e35213552dd1dd02bc393d2e
+    profiles:
+      - monitoring
     ports:
       - "3200:3000"
     environment:
@@ -166,7 +210,10 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - loki
+      - prometheus
     restart: unless-stopped
+    networks:
+      - monitoring
     logging:
       driver: json-file
       options:
@@ -177,7 +224,8 @@ volumes:
   cargo-cache:
   loki-data:
   grafana-data:
-  postgres-data:
+  prometheus-data:
+  postgres_data:
   redis-data:
 
 networks:
@@ -185,3 +233,5 @@ networks:
   backend:
   data:
     internal: true
+  monitoring:
+    internal: false

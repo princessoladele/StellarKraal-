@@ -10,22 +10,17 @@ const SEGMENT_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
   collateral: 'Collateral',
   loans: 'Loans',
-  borrow: 'Borrow',
-  profile: 'Profile',
-  settings: 'Settings',
   admin: 'Admin',
   users: 'Users',
   reports: 'Reports',
-  liquidators: 'Liquidators',
-  moderation: 'Moderation',
   statistics: 'Statistics',
+  moderation: 'Moderation',
+  liquidators: 'Liquidators',
+  borrow: 'Borrow',
+  settings: 'Settings',
+  profile: 'Profile',
   help: 'Help',
-  faq: 'FAQ',
-  glossary: 'Glossary',
   transactions: 'Transactions',
-  onboarding: 'Onboarding',
-  docs: 'Docs',
-  colors: 'Colours',
 };
 
 interface Crumb {
@@ -34,17 +29,18 @@ interface Crumb {
 }
 
 /**
- * Builds a crumb list from a pathname string, always prepending "Home".
- *
+ * Builds a crumb list from a pathname string, always starting with Home.
  * e.g. "/loans/abc-123" →
- *   [{ label: 'Home',    href: '/' },
- *    { label: 'Loans',   href: '/loans' },
+ *   [{ label: 'Home', href: '/' },
+ *    { label: 'Loans', href: '/loans' },
  *    { label: 'abc-123', href: '/loans/abc-123' }]
  */
 export function buildCrumbs(pathname: string): Crumb[] {
   const segments = pathname.split('/').filter(Boolean);
 
-  const pathCrumbs: Crumb[] = segments.map((segment, index) => {
+  const home: Crumb = { label: 'Home', href: '/' };
+
+  const rest = segments.map((segment, index) => {
     const href = '/' + segments.slice(0, index + 1).join('/');
     // Use the label map, then fall back to capitalising the raw segment.
     const label =
@@ -53,59 +49,57 @@ export function buildCrumbs(pathname: string): Crumb[] {
     return { label, href };
   });
 
-  // Always include a Home crumb at the start.
-  return [{ label: 'Home', href: '/' }, ...pathCrumbs];
+  return [home, ...rest];
+}
+
+/**
+ * Builds a JSON-LD BreadcrumbList structured data object for SEO.
+ */
+function buildJsonLd(crumbs: Crumb[]): string {
+  const baseUrl =
+    typeof window !== 'undefined' ? window.location.origin : 'https://stellarkraal.example.com';
+  const itemListElement = crumbs.map((crumb, index) => ({
+    '@type': 'ListItem',
+    position: index + 1,
+    name: crumb.label,
+    item: `${baseUrl}${crumb.href}`,
+  }));
+  return JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement,
+  });
 }
 
 /**
  * Renders a breadcrumb trail for the current route.
+ * Returns null when the path is not nested (≤1 segment deep),
+ * so it is invisible on top-level pages like /dashboard.
  *
- * Returns null when the path is at depth ≤ 1 (e.g. /dashboard itself)
- * since a single-segment path only produces [Home, Dashboard] which is
- * only meaningful when there is a deeper page to navigate back from.
- *
- * Acceptance criteria (#1258):
- *  ✓ Breadcrumb rendered on all pages at depth > 1
- *  ✓ Uses structured data (BreadcrumbList JSON-LD) for SEO
- *  ✓ Home > Loans > Loan #123 format
- *  ✓ Accessible: nav landmark with aria-label="breadcrumb"
- *  ✓ Last crumb is not a link (current page)
+ * Includes:
+ *  - Home crumb as the first item
+ *  - JSON-LD BreadcrumbList structured data for SEO
+ *  - aria-label="breadcrumb" nav landmark
+ *  - Last crumb is not a link (current page)
+ *  - Home > Loans > Loan #123 format
  */
 export default function Breadcrumb() {
   const pathname = usePathname();
   const crumbs = buildCrumbs(pathname);
 
-  // Show breadcrumb only on pages nested at depth > 1 (i.e., more than one
-  // real segment, so the crumb list has Home + segment + at least one deeper
-  // segment = 3+ items).
-  const pathDepth = pathname.split('/').filter(Boolean).length;
-  if (pathDepth <= 1) return null;
-
-  // JSON-LD structured data for SEO (BreadcrumbList schema.org).
-  const jsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: crumbs.map((crumb, index) => ({
-      '@type': 'ListItem',
-      position: index + 1,
-      name: crumb.label,
-      item: typeof window !== 'undefined'
-        ? `${window.location.origin}${crumb.href}`
-        : crumb.href,
-    })),
-  };
+  // Hide on top-level pages — Home alone or just one segment (e.g. /dashboard itself)
+  if (crumbs.length <= 2) return null;
 
   return (
     <>
-      {/* JSON-LD for search engines */}
+      {/* JSON-LD structured data for SEO */}
       <script
         type="application/ld+json"
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: buildJsonLd(crumbs) }}
       />
 
       <nav aria-label="breadcrumb" className="mb-4">
-        <ol className="flex flex-wrap items-center gap-1 text-sm text-brown/70 dark:text-[var(--color-text-muted)]">
+        <ol className="flex flex-wrap items-center gap-1 text-sm text-brown/70">
           {crumbs.map((crumb, index) => {
             const isLast = index === crumbs.length - 1;
             return (
@@ -116,20 +110,11 @@ export default function Breadcrumb() {
                   </span>
                 )}
                 {isLast ? (
-                  // Current page — not a link; marked with aria-current.
-                  <span
-                    aria-current="page"
-                    className="font-medium text-brown dark:text-[var(--color-text)] truncate max-w-[16ch]"
-                    title={crumb.label}
-                  >
+                  <span aria-current="page" className="font-medium text-brown">
                     {crumb.label}
                   </span>
                 ) : (
-                  <Link
-                    href={crumb.href}
-                    className="hover:text-brown dark:hover:text-[var(--color-text)] hover:underline transition truncate max-w-[16ch]"
-                    title={crumb.label}
-                  >
+                  <Link href={crumb.href} className="hover:text-brown hover:underline transition">
                     {crumb.label}
                   </Link>
                 )}
